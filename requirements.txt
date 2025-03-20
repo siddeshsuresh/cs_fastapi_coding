@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+networkx
+matplotlib
+prettytable
+pydantic
+numpy 
