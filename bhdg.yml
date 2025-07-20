@@ -39,3 +39,27 @@
 
       Write-Host "Presigned URL: $presignedUrl"
       echo "##vso[task.setvariable variable=ISO_URL]$presignedUrl"
+
+
+
+- task: PowerShell@2
+  displayName: 'Download ISO from S3 to Local'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $bucketPath = "s3://adue-nexthink-email-delivery/SM_DVD9_Win_Pro_11_24H2.iso"
+      $localPath = "C:\packer\windows11.iso"
+
+      if (-not (Test-Path "C:\packer")) {
+        New-Item -ItemType Directory -Path "C:\packer" | Out-Null
+      }
+
+      Write-Host "Downloading ISO to $localPath ..."
+      aws s3 cp $bucketPath $localPath --region us-west-2
+
+      if (-not (Test-Path $localPath)) {
+        throw "Download failed, ISO not found at $localPath"
+      }
+
+      Write-Host "✅ Download complete: $localPath"
+      Write-Host "##vso[task.setvariable variable=LOCAL_ISO_PATH]$localPath"
