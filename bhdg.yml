@@ -21,3 +21,21 @@
       Write-Host "✅ Temporary AWS credentials acquired."
   env:
     SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+- task: PowerShell@2
+  displayName: 'Generate ISO Pre-signed URL'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $bucketPath = "s3://adue-nexthink-email-delivery/SM_DVD9_Win_Pro_11_24H2.iso"
+      $region = "us-west-2"
+
+      Write-Host "Running presign..."
+      $presignedUrl = aws s3 presign $bucketPath --region $region
+
+      if (-not $presignedUrl) {
+        throw "Presigned URL generation failed"
+      }
+
+      Write-Host "Presigned URL: $presignedUrl"
+      echo "##vso[task.setvariable variable=ISO_URL]$presignedUrl"
