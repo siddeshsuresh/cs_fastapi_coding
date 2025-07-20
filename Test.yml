@@ -40,3 +40,28 @@
     Write-Host "✅ AWS credentials are set for the process"
     Write-Host "Access Key ID: $accessKey"
   displayName: 'Export AWS Credentials for Packer'
+
+
+
+
+  - task: AWSCLI@1
+  name: ExportCreds
+  inputs:
+    awsCredentials: '<yourServiceConnectionName>'
+    regionName: 'us-west-2'
+    awsCommand: 'sts'
+    awsSubCommand: 'get-caller-identity'
+    outputVariable: awsIdentity
+  env:
+    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+
+- powershell: |
+    Write-Host "Running Packer..."
+    $env:AWS_ACCESS_KEY_ID = "$(AWS_ACCESS_KEY_ID)"
+    $env:AWS_SECRET_ACCESS_KEY = "$(AWS_SECRET_ACCESS_KEY)"
+    $env:AWS_SESSION_TOKEN = "$(AWS_SESSION_TOKEN)"
+    
+    packer build my-packer-template.json
+  displayName: 'Run Packer'
