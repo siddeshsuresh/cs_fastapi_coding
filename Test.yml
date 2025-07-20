@@ -1,0 +1,22 @@
+- powershell: |
+    Write-Host "Exporting AWS credentials manually from profile..."
+
+    $accessKey = aws configure get aws_access_key_id
+    $secretKey = aws configure get aws_secret_access_key
+    $sessionToken = aws configure get aws_session_token
+
+    if (-not $accessKey) { Write-Error "accessKey is empty"; exit 1 }
+    if (-not $secretKey) { Write-Error "secretKey is empty"; exit 1 }
+
+    # Export them into the environment
+    $env:AWS_ACCESS_KEY_ID = $accessKey
+    $env:AWS_SECRET_ACCESS_KEY = $secretKey
+    $env:AWS_SESSION_TOKEN = $sessionToken
+
+    Write-Host "AWS_ACCESS_KEY_ID set to: $env:AWS_ACCESS_KEY_ID"
+    Write-Host "AWS_SECRET_ACCESS_KEY set."
+    Write-Host "AWS_SESSION_TOKEN set."
+
+    # Optional sanity check
+    aws sts get-caller-identity
+  displayName: 'Export AWS Credentials for Packer'
