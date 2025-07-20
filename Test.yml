@@ -20,3 +20,23 @@
     # Optional sanity check
     aws sts get-caller-identity
   displayName: 'Export AWS Credentials for Packer'
+
+
+- powershell: |
+    Write-Host "Setting AWS credentials from environment variables..."
+
+    $accessKey = $env:AWS_ACCESS_KEY_ID
+    $secretKey = $env:AWS_SECRET_ACCESS_KEY
+    $sessionToken = $env:AWS_SESSION_TOKEN
+
+    if (-not $accessKey) { Write-Error "AWS_ACCESS_KEY_ID is empty"; exit 1 }
+    if (-not $secretKey) { Write-Error "AWS_SECRET_ACCESS_KEY is empty"; exit 1 }
+
+    # Set them again to ensure downstream tools like Packer can see them
+    [System.Environment]::SetEnvironmentVariable("AWS_ACCESS_KEY_ID", $accessKey, "Process")
+    [System.Environment]::SetEnvironmentVariable("AWS_SECRET_ACCESS_KEY", $secretKey, "Process")
+    [System.Environment]::SetEnvironmentVariable("AWS_SESSION_TOKEN", $sessionToken, "Process")
+
+    Write-Host "✅ AWS credentials are set for the process"
+    Write-Host "Access Key ID: $accessKey"
+  displayName: 'Export AWS Credentials for Packer'
