@@ -63,3 +63,23 @@
 
       Write-Host "✅ Download complete: $localPath"
       Write-Host "##vso[task.setvariable variable=LOCAL_ISO_PATH]$localPath"
+
+
+
+
+- task: PowerShell@2
+  displayName: 'Disable Hyper-V and Core Isolation for VirtualBox'
+  inputs:
+    targetType: 'inline'
+    script: |
+      Write-Host "Disabling Hyper-V launch..."
+      bcdedit /set hypervisorlaunchtype off
+
+      Write-Host "Disabling Hypervisor Enforced Code Integrity (HVCI)..."
+      $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
+      if (-Not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force | Out-Null
+      }
+      Set-ItemProperty -Path $regPath -Name "Enabled" -Value 0 -Force
+
+      Write-Host "✅ Registry and boot config applied. Please reboot the agent manually to take full effect."
