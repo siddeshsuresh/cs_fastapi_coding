@@ -1,0 +1,23 @@
+- task: PowerShell@2
+  displayName: 'Assume Role via OIDC and Export AWS Credentials'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $tokenPath = "$env:BUILD_SOURCESDIRECTORY\oidc_token.jwt"
+      Set-Content -Path $tokenPath -Value "$env:SYSTEM_ACCESSTOKEN"
+
+      Write-Host "Calling STS AssumeRoleWithWebIdentity..."
+      $stsResult = aws sts assume-role-with-web-identity `
+        --role-arn "$(awsRoleArn)" `
+        --role-session-name "AzureOIDCSession" `
+        --web-identity-token file://$tokenPath `
+        --duration-seconds 3600
+
+      $creds = $stsResult | ConvertFrom-Json
+      $env:AWS_ACCESS_KEY_ID = $creds.Credentials.AccessKeyId
+      $env:AWS_SECRET_ACCESS_KEY = $creds.Credentials.SecretAccessKey
+      $env:AWS_SESSION_TOKEN = $creds.Credentials.SessionToken
+
+      Write-Host "✅ Temporary AWS credentials acquired."
+  env:
+    SYSTEM_ACCESSTOKEN: $(System.AccessToken)
