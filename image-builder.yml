@@ -1,0 +1,127 @@
+# azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - dev
+
+parameters:
+  - name: environment
+    displayName: 'Select Environment'
+    type: string
+    default: 'dev'
+    values:
+      - dev
+
+variables:
+  - name: applicationName
+    value: 'adue-windows11-imagebuilder'
+  - name: awsRegion
+    value: 'us-west-2'
+  - name: awsAccountId
+    value: '397854063271'
+  - name: awsCredentials
+    value: 'buildAgent-ITEmployeeExperience-pu@ADUEDev'
+  - name: imageName
+    value: 'adue_win11_imagebuilder_dev'
+  - name: isoUrl
+    value: 's3://adue-nexthink-email-report-dev-397854063271-bucket/SW_DVD9_Win_Pro_11_24H2.ISO'
+  - name: vpcId
+    value: 'vpc-03b8acc43f0d9314d'
+  - name: subnetId
+    value: 'subnet-0a1259a53653bfc7a'
+  - name: securityGroupId
+    value: 'sg-0ab1c8d189a319a5f'
+  - name: keyPairName
+    value: 'SwiftCloudNonProd'
+
+stages:
+  - stage: ImageBuilderStage
+    displayName: 'Build Windows 11 Image and Register WorkSpaces Bundle'
+    jobs:
+      - job: BuildImageJob
+        displayName: 'Run Image Builder Pipeline'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AWSCLI@1
+            displayName: 'Deploy ImageBuilder CloudFormation Stack'
+            inputs:
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
+              awsCommand: 'cloudformation'
+              awsSubCommand: 'deploy'
+              awsArguments: >
+                --stack-name $(applicationName)-$(environment) 
+                --template-file cf/image-builder.yaml 
+                --capabilities CAPABILITY_NAMED_IAM 
+                --parameter-overrides 
+                  Environment=$(environment) 
+                  ApplicationName=$(applicationName) 
+                  VpcId=$(vpcId) 
+                  SubnetId=$(subnetId) 
+                  SecurityGroupId=$(securityGroupId) 
+                  KeyPairName=$(keyPairName) 
+                  ISOUrl=$(isoUrl)
+
+          - task: AWSCLI@1
+            displayName: 'Trigger Image Import from ISO'
+            inputs:
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
+              awsCommand: 'imagebuilder'
+              awsSubCommand: 'import-image'
+              awsArguments: >
+                --image-name $(imageName) 
+                --import-type BYOL_WINDOWS 
+                --os-version "Microsoft Windows 11" 
+                --iso-url $(isoUrl) 
+                --infrastructure-configuration-arn $(aws cloudformation describe-stacks --stack-name $(applicationName)-$(environment) --query "Stacks[0].Outputs[?OutputKey=='InfrastructureConfigArn'].OutputValue" --output text) 
+                --role-name $(applicationName)-$(environment)-ImageBuilderServiceRole
+
+          - script: |
+              echo "Waiting for image to become AVAILABLE..."
+              while true; do
+                STATUS=$(aws ec2 describe-images \
+                  --owners self \
+                  --filters "Name=name,Values=$(imageName)*" \
+                  --query 'Images | sort_by(@, &CreationDate)[-1].State' \
+                  --output text)
+                echo "Current AMI status: $STATUS"
+                if [ "$STATUS" = "available" ]; then
+                  echo "✅ AMI is ready!"
+                  break
+                fi
+                echo "Waiting 30s..."
+                sleep 30
+              done
+            displayName: 'Wait for AMI to be ready'
+
+          - script: |
+              echo "Registering AMI to WorkSpaces and Creating Bundle"
+              export AMI_ID=$(aws ec2 describe-images \
+                --owners self \
+                --filters "Name=name,Values=$(imageName)*" \
+                --query 'Images | sort_by(@, &CreationDate)[-1].ImageId' \
+                --output text)
+
+              aws workspaces register-workspace-image \
+                --image-id "$AMI_ID" \
+                --name "$(applicationName)_Win11" \
+                --description "Windows 11 Image Imported from ISO" \
+                --os-version "WINDOWS_11"
+
+              sleep 60
+
+              export WS_IMAGE_ID=$(aws workspaces describe-workspace-images \
+                --query "Images[?Name=='$(applicationName)_Win11'].ImageId" \
+                --output text)
+
+              aws workspaces create-workspace-bundle \
+                --bundle-name "$(applicationName)_bundle" \
+                --image-id "$WS_IMAGE_ID" \
+                --compute-type-name POWERPRO \
+                --user-storage Capacity=50 \
+                --root-storage Capacity=80 \
+                --description "Base Win11 Bundle for $(applicationName)"
+            displayName: 'Register WorkSpaces Image and Create Bundle'
