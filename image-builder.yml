@@ -176,3 +176,37 @@ stages:
       --query "Stacks[0].Outputs[?OutputKey=='ImageBuilderServiceRole'].OutputValue"
       --output text
 
+- task: AWSShellScript@1
+  name: GetInfraConfig
+  displayName: 'Get Infrastructure Config ARN'
+  inputs:
+    awsCredentials: '$(awsCredentials)'
+    regionName: '$(awsRegion)'
+    scriptType: inline
+    failOnStderr: true
+    inlineScript: |
+      INFRA_ARN=$(aws cloudformation describe-stacks \
+        --stack-name $(applicationName)-$(parameters.environment) \
+        --query "Stacks[0].Outputs[?OutputKey=='InfrastructureConfigArn'].OutputValue" \
+        --output text)
+
+      echo "Infrastructure Config ARN: $INFRA_ARN"
+      echo "##vso[task.setvariable variable=INFRA_CONFIG_ARN;isOutput=true]$INFRA_ARN"
+
+
+- task: AWSShellScript@1
+  name: GetExecRole
+  displayName: 'Get Execution Role ARN'
+  inputs:
+    awsCredentials: '$(awsCredentials)'
+    regionName: '$(awsRegion)'
+    scriptType: inline
+    failOnStderr: true
+    inlineScript: |
+      ROLE_ARN=$(aws cloudformation describe-stacks \
+        --stack-name $(applicationName)-$(parameters.environment) \
+        --query "Stacks[0].Outputs[?OutputKey=='IAMRole'].OutputValue" \
+        --output text)
+
+      echo "Execution Role ARN: $ROLE_ARN"
+      echo "##vso[task.setvariable variable=EXEC_ROLE_ARN;isOutput=true]$ROLE_ARN"
