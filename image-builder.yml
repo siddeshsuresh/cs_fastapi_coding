@@ -149,4 +149,30 @@ stages:
                 echo "##vso[task.setvariable variable=execRoleArn]$EXEC_ROLE_ARN"
               displayName: 'Get Execution Role ARN'
 
+- task: AWSCLI@1
+  name: GetInfraConfig
+  displayName: 'Get InfrastructureConfigArn'
+  inputs:
+    awsCredentials: '$(awsCredentials)'
+    regionName: '$(awsRegion)'
+    awsCommand: 'cloudformation'
+    awsSubCommand: 'describe-stacks'
+    awsArguments: >
+      --stack-name $(applicationName)-$(environment)
+      --query "Stacks[0].Outputs[?OutputKey=='InfrastructureConfigArn'].OutputValue"
+      --output text
+
+
+- task: AWSCLI@1
+  name: GetExecRole
+  displayName: 'Get Execution Role ARN'
+  inputs:
+    awsCredentials: '$(awsCredentials)'
+    regionName: '$(awsRegion)'
+    awsCommand: 'cloudformation'
+    awsSubCommand: 'describe-stacks'
+    awsArguments: >
+      --stack-name $(applicationName)-$(environment)
+      --query "Stacks[0].Outputs[?OutputKey=='ImageBuilderServiceRole'].OutputValue"
+      --output text
 
