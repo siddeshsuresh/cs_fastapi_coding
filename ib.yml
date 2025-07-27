@@ -6,6 +6,16 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Import Windows 11 ISO using EC2 Image Builder with Infra Config and IAM roles
 
 Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, int, prod]
+    Description: Deployment environment (e.g., dev, int, prod)
+
+  ApplicationName:
+    Type: String
+    Default: Win11IsoImageBuilder
+    Description: Logical application name prefix
+
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC where image builder instance will run
@@ -35,7 +45,7 @@ Resources:
   ImageBuilderServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: ImageBuilderServiceRole
+      RoleName: !Sub "${ApplicationName}-${Environment}-ImageBuilderServiceRole"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -59,12 +69,12 @@ Resources:
       Path: "/"
       Roles:
         - Ref: ImageBuilderServiceRole
-      InstanceProfileName: EC2InstanceProfileForImageBuilder
+      InstanceProfileName: !Sub "${ApplicationName}-${Environment}-ImageBuilderInstanceProfile"
 
   ImageBuilderInfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
-      Name: !Sub "${ImageName}-infra-config"
+      Name: !Sub "${ApplicationName}-${Environment}-InfraConfig"
       Description: Infrastructure config for ISO import
       InstanceProfileName: !Ref ImageBuilderInstanceProfile
       InstanceTypes:
@@ -75,7 +85,7 @@ Resources:
         - !Ref SecurityGroupId
       TerminateInstanceOnFailure: true
       Tags:
-        Name: !Ref ImageName
+        Name: !Sub "${ApplicationName}-${Environment}"
 
 Outputs:
   InfrastructureConfigName:
@@ -93,7 +103,6 @@ Outputs:
   IAMRole:
     Description: IAM Role used by Image Builder
     Value: !Ref ImageBuilderServiceRole
-
 
 # ===========================
 # Azure DevOps Pipeline Script
@@ -115,6 +124,8 @@ variables:
   WS_IMAGE_NAME: 'Win11_23H2_July2025'
   WS_BUNDLE_NAME: 'Win11_23H2_PowerPro'
   ISO_URL: 's3://your-bucket/windows11.iso'
+  ENVIRONMENT: 'dev'
+  APPLICATION_NAME: 'Win11IsoImageBuilder'
 
 steps:
 
@@ -125,7 +136,7 @@ steps:
     regionName: '$(AWS_REGION)'
     awsCommand: 'cloudformation'
     awsSubCommand: 'deploy'
-    awsArguments: '--stack-name win11-imagebuilder-stack --template-file cf-template.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides VpcId=<your-vpc> SubnetId=<your-subnet> SecurityGroupId=<your-sg> KeyPairName=<your-key> ISOUrl=$(ISO_URL)'
+    awsArguments: '--stack-name win11-imagebuilder-stack --template-file cf-template.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides Environment=$(ENVIRONMENT) ApplicationName=$(APPLICATION_NAME) VpcId=<your-vpc> SubnetId=<your-subnet> SecurityGroupId=<your-sg> KeyPairName=<your-key> ISOUrl=$(ISO_URL)'
   displayName: '🚀 Deploy CloudFormation Stack for EC2 Image Builder'
 
 - task: AWSCLI@1
@@ -150,7 +161,7 @@ steps:
       --os-version "Microsoft Windows 11" \
       --iso-url "$(ISO_URL)" \
       --infrastructure-configuration-arn "$INFRA_CONFIG_ARN" \
-      --role-name ImageBuilderServiceRole
+      --role-name "$(APPLICATION_NAME)-$(ENVIRONMENT)-ImageBuilderServiceRole"
   displayName: '🛠️ Trigger EC2 ImageBuilder ISO Import'
 
 - script: |
