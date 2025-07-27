@@ -1,0 +1,161 @@
+---
+# ===========================
+# CloudFormation Template
+# ===========================
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Import Windows 11 ISO using EC2 Image Builder with Infra Config and IAM roles
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where image builder instance will run
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet for image builder instance
+
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group for image builder instance
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair to use for image builder
+
+  ISOUrl:
+    Type: String
+    Description: S3 URL to the ISO (e.g., s3://your-bucket/windows11.iso)
+
+  ImageName:
+    Type: String
+    Default: win11_byol_iso_image
+
+Resources:
+
+  ImageBuilderServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImageBuilderServiceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref: ImageBuilderServiceRole
+      InstanceProfileName: EC2InstanceProfileForImageBuilder
+
+  ImageBuilderInfraConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub "${ImageName}-infra-config"
+      Description: Infrastructure config for ISO import
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes:
+        - t3.large
+      KeyPair: !Ref KeyPairName
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      TerminateInstanceOnFailure: true
+      Tags:
+        Name: !Ref ImageName
+
+Outputs:
+  InfrastructureConfigName:
+    Description: Name of the infrastructure configuration
+    Value: !Ref ImageBuilderInfraConfig
+
+  InstanceProfile:
+    Description: Instance Profile created for EC2 Image Builder
+    Value: !Ref ImageBuilderInstanceProfile
+
+  IAMRole:
+    Description: IAM Role used by Image Builder
+    Value: !Ref ImageBuilderServiceRole
+
+
+# ===========================
+# Azure DevOps Pipeline Script
+# ===========================
+
+# Save the following as azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  AWS_REGION: 'us-west-2'
+  IMAGE_NAME: 'win11_byol_iso_image'
+  WS_IMAGE_NAME: 'Win11_23H2_July2025'
+  WS_BUNDLE_NAME: 'Win11_23H2_PowerPro'
+
+steps:
+
+- task: AWSCLI@1
+  inputs:
+    awsCredentials: 'YourServiceConnectionName'
+    regionName: '$(AWS_REGION)'
+    awsCommand: 's3'
+    awsSubCommand: 'ls'
+    awsArguments: 's3://your-bucket/windows11.iso'
+  displayName: '✅ Confirm ISO upload to S3'
+
+- script: |
+    echo "🔍 Getting latest AMI ID for image $(IMAGE_NAME)"
+    export LATEST_AMI=$(aws ec2 describe-images \
+      --owners self \
+      --filters "Name=name,Values=$(IMAGE_NAME)*" \
+      --query 'Images | sort_by(@, &CreationDate)[-1].ImageId' \
+      --output text)
+
+    echo "✅ Found AMI: $LATEST_AMI"
+
+    echo "📌 Registering as WorkSpaces image..."
+    aws workspaces register-workspace-image \
+      --image-id "$LATEST_AMI" \
+      --name "$(WS_IMAGE_NAME)" \
+      --description "Imported Win11 BYOL Image from ISO" \
+      --os-version "WINDOWS_11"
+
+    echo "⏳ Waiting for WorkSpaces image registration..."
+    sleep 60
+
+    export WS_IMAGE_ID=$(aws workspaces describe-workspace-images \
+      --query "Images[?Name=='$(WS_IMAGE_NAME)'].ImageId" \
+      --output text)
+
+    echo "🖼️ WorkSpaces Image ID: $WS_IMAGE_ID"
+
+    echo "📦 Creating WorkSpaces bundle..."
+    aws workspaces create-workspace-bundle \
+      --bundle-name "$(WS_BUNDLE_NAME)" \
+      --image-id "$WS_IMAGE_ID" \
+      --compute-type-name POWERPRO \
+      --user-storage Capacity=50 \
+      --root-storage Capacity=80 \
+      --description "Windows 11 23H2 - 8 vCPU / 32 GB RAM"
+  displayName: '🚀 Register AMI and Create WorkSpaces Bundle'
+  env:
+    AWS_REGION: $(AWS_REGION)
