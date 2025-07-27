@@ -125,3 +125,28 @@ stages:
                 --root-storage Capacity=80 \
                 --description "Base Win11 Bundle for $(applicationName)"
             displayName: 'Register WorkSpaces Image and Create Bundle'
+
+
+            - script: |
+                echo "Fetching Infrastructure Configuration ARN..."
+                INFRA_CONFIG_ARN=$(aws cloudformation describe-stacks \
+                  --stack-name $(applicationName)-$(parameters.environment) \
+                  --query "Stacks[0].Outputs[?OutputKey=='InfrastructureConfigArn'].OutputValue" \
+                  --output text)
+            
+                echo "Fetched ARN: $INFRA_CONFIG_ARN"
+                echo "##vso[task.setvariable variable=infraConfigArn]$INFRA_CONFIG_ARN"
+              displayName: 'Get InfrastructureConfigArn'
+
+            - script: |
+                echo "Fetching Execution Role ARN..."
+                EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
+                  --stack-name $(applicationName)-$(parameters.environment) \
+                  --query "Stacks[0].Outputs[?OutputKey=='ImageBuilderServiceRole'].OutputValue" \
+                  --output text)
+            
+                echo "Fetched Execution Role ARN: $EXEC_ROLE_ARN"
+                echo "##vso[task.setvariable variable=execRoleArn]$EXEC_ROLE_ARN"
+              displayName: 'Get Execution Role ARN'
+
+
