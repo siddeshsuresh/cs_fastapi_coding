@@ -82,6 +82,10 @@ Outputs:
     Description: Name of the infrastructure configuration
     Value: !Ref ImageBuilderInfraConfig
 
+  InfrastructureConfigArn:
+    Description: ARN of the infrastructure configuration
+    Value: !GetAtt ImageBuilderInfraConfig.Arn
+
   InstanceProfile:
     Description: Instance Profile created for EC2 Image Builder
     Value: !Ref ImageBuilderInstanceProfile
@@ -111,27 +115,41 @@ variables:
   WS_IMAGE_NAME: 'Win11_23H2_July2025'
   WS_BUNDLE_NAME: 'Win11_23H2_PowerPro'
   ISO_URL: 's3://your-bucket/windows11.iso'
-  INFRA_CONFIG_ARN: '<FillMe: output or parameter from CF>'
 
 steps:
 
 - task: AWSCLI@1
+  name: DeployCFStack
   inputs:
     awsCredentials: 'YourServiceConnectionName'
     regionName: '$(AWS_REGION)'
-    awsCommand: 's3'
-    awsSubCommand: 'ls'
-    awsArguments: '$(ISO_URL)'
-  displayName: '✅ Confirm ISO upload to S3'
+    awsCommand: 'cloudformation'
+    awsSubCommand: 'deploy'
+    awsArguments: '--stack-name win11-imagebuilder-stack --template-file cf-template.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides VpcId=<your-vpc> SubnetId=<your-subnet> SecurityGroupId=<your-sg> KeyPairName=<your-key> ISOUrl=$(ISO_URL)'
+  displayName: '🚀 Deploy CloudFormation Stack for EC2 Image Builder'
+
+- task: AWSCLI@1
+  name: FetchInfraConfigArn
+  inputs:
+    awsCredentials: 'YourServiceConnectionName'
+    regionName: '$(AWS_REGION)'
+    awsCommand: 'cloudformation'
+    awsSubCommand: 'describe-stacks'
+    awsArguments: '--stack-name win11-imagebuilder-stack'
+  displayName: '🔍 Get Infrastructure Configuration ARN'
+  continueOnError: false
 
 - script: |
     echo "🚀 Triggering Image Builder ISO import..."
+    INFRA_CONFIG_ARN=$(aws cloudformation describe-stacks --stack-name win11-imagebuilder-stack \
+      --query "Stacks[0].Outputs[?OutputKey=='InfrastructureConfigArn'].OutputValue" --output text)
+
     aws imagebuilder import-image \
       --image-name "$(IMAGE_NAME)" \
       --import-type BYOL_WINDOWS \
       --os-version "Microsoft Windows 11" \
       --iso-url "$(ISO_URL)" \
-      --infrastructure-configuration-arn "$(INFRA_CONFIG_ARN)" \
+      --infrastructure-configuration-arn "$INFRA_CONFIG_ARN" \
       --role-name ImageBuilderServiceRole
   displayName: '🛠️ Trigger EC2 ImageBuilder ISO Import'
 
