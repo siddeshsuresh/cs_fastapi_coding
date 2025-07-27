@@ -110,6 +110,8 @@ variables:
   IMAGE_NAME: 'win11_byol_iso_image'
   WS_IMAGE_NAME: 'Win11_23H2_July2025'
   WS_BUNDLE_NAME: 'Win11_23H2_PowerPro'
+  ISO_URL: 's3://your-bucket/windows11.iso'
+  INFRA_CONFIG_ARN: '<FillMe: output or parameter from CF>'
 
 steps:
 
@@ -119,8 +121,40 @@ steps:
     regionName: '$(AWS_REGION)'
     awsCommand: 's3'
     awsSubCommand: 'ls'
-    awsArguments: 's3://your-bucket/windows11.iso'
+    awsArguments: '$(ISO_URL)'
   displayName: '✅ Confirm ISO upload to S3'
+
+- script: |
+    echo "🚀 Triggering Image Builder ISO import..."
+    aws imagebuilder import-image \
+      --image-name "$(IMAGE_NAME)" \
+      --import-type BYOL_WINDOWS \
+      --os-version "Microsoft Windows 11" \
+      --iso-url "$(ISO_URL)" \
+      --infrastructure-configuration-arn "$(INFRA_CONFIG_ARN)" \
+      --role-name ImageBuilderServiceRole
+  displayName: '🛠️ Trigger EC2 ImageBuilder ISO Import'
+
+- script: |
+    echo "⏳ Waiting for AMI to become AVAILABLE..."
+    while true; do
+      STATUS=$(aws ec2 describe-images \
+        --owners self \
+        --filters "Name=name,Values=$(IMAGE_NAME)*" \
+        --query 'Images | sort_by(@, &CreationDate)[-1].State' \
+        --output text)
+
+      echo "Current AMI status: $STATUS"
+
+      if [ "$STATUS" = "available" ]; then
+        echo "✅ AMI is ready!"
+        break
+      fi
+
+      echo "Waiting for 30s..."
+      sleep 30
+    done
+  displayName: '🕒 Wait for AMI to be Available'
 
 - script: |
     echo "🔍 Getting latest AMI ID for image $(IMAGE_NAME)"
