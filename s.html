@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload User CSV</title>
+</head>
+<body>
+  <h2>Upload CSV of Usernames</h2>
+  <input type="file" id="fileInput" />
+  <button onclick="uploadFile()">Upload</button>
+
+  <script>
+    async function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert("Please select a file");
+
+      const filename = file.name;
+      const bucket = 'workspace-csv-uploader-dev';
+      const uploadUrl = `https://${bucket}.s3.amazonaws.com/uploads/${filename}`;
+
+      await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: file
+      });
+
+      alert('Uploaded successfully');
+    }
+  </script>
+</body>
+</html>
