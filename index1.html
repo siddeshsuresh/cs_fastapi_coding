@@ -1,32 +1,45 @@
-<script>
-async function uploadFile() {
-  const file = document.getElementById('fileInput').files[0];
-  if (!file) return alert("Please select a file");
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload User CSV</title>
+</head>
+<body>
+  <h2>Upload CSV of Usernames v4</h2>
+  <input type="file" id="fileInput" />
+  <button onclick="uploadFile()">Upload</button>
 
-  const filename = file.name;
-  const apiBase = 'https://17rkfnfm4e.execute-api.us-west-2.amazonaws.com';
-  
-  const uploadUrl = await fetch(
-    `${apiBase}/dev/s3-workspace-lambda?filename=${encodeURIComponent(filename)}`,
-    {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/plain'
+  <script>
+    async function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert("Please select a file");
+
+      const filename = file.name;
+      const apiBase = 'https://17rkfnfm4e.execute-api.us-west-2.amazonaws.com';
+
+      const uploadUrl = await fetch(
+        `${apiBase}/dev/s3-workspace-lambda?filename=${encodeURIComponent(filename)}`,
+        {
+          method: 'GET',
+          headers: {
+            'Accept': 'text/plain'
+          }
+        }
+      ).then(res => res.text());
+
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: file
+      });
+
+      if (response.ok) {
+        alert('Uploaded successfully');
+      } else {
+        const text = await response.text();
+        alert(`Upload failed: ${response.status}\n${text}`);
       }
     }
-  ).then(res => res.text());
-
-  const response = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/csv' },
-    body: file
-  });
-
-  if (response.ok) {
-    alert('Uploaded successfully');
-  } else {
-    const text = await response.text();
-    alert(`Upload failed: ${response.status}\n${text}`);
-  }
-}
-</script>
+  </script>
+</body>
+</html>
