@@ -1,1 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload User CSV</title>
+  <style>
+    body {
+      font-family: Arial;
+      margin: 2rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 2rem;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+  </style>
+</head>
+<body>
+  <h2>Upload CSV of Usernames</h2>
+  <input type="file" id="fileInput" />
+  <button onclick="uploadFile()">Upload</button>
 
+  <div id="results"></div>
+
+  <script>
+    async function uploadFile() {
+      const fileInput = document.getElementById('fileInput');
+      const file = fileInput.files[0];
+      if (!file) return alert("Please select a file");
+
+      const filename = file.name;
+      const apiBase = 'https://r17kfnfm4e.execute-api.us-west-2.amazonaws.com';
+      
+      // Step 1: Get presigned URL
+      const uploadUrl = await fetch(`${apiBase}/dev/s3-workspace-lambda?filename=${encodeURIComponent(filename)}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'text/plain'
+        }
+      }).then(res => res.text());
+
+      // Step 2: Upload CSV to presigned URL
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: file
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        alert(`Upload failed: ${response.status}\n${text}`);
+        return;
+      }
+
+      alert('Uploaded successfully');
+
+      // Step 3: Process CSV and show results
+      const processRes = await fetch(`${apiBase}/dev/process-csv?filename=${encodeURIComponent(filename)}`);
+      const result = await processRes.json();
+      const found = result.found || [];
+      const notFound = result.not_found || [];
+
+      renderResults(found, notFound);
+    }
+
+    function renderResults(found, notFound) {
+      const div = document.getElementById('results');
+      div.innerHTML = `
+        <h3>Results</h3>
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            ${[...found.map(email => `<tr><td>${email}</td><td style="color: green;">Found</td></tr>`),
+                ...notFound.map(email => `<tr><td>${email}</td><td style="color: red;">Not Found</td></tr>`)].join('')}
+          </tbody>
+        </table>
+      `;
+    }
+  </script>
+</body>
+</html>
