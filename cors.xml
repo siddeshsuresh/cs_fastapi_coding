@@ -8,3 +8,14 @@
     <ExposeHeader>ETag</ExposeHeader>
   </CORSRule>
 </CORSConfiguration>
+
+
+
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedOrigins": ["https://d4px8x18daeqs.cloudfront.net"],
+    "ExposeHeaders": ["ETag"]
+  }
+]
