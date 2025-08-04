@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Upload User CSV v5</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    h2 {
+      color: #333;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #aaa;
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background-color: #f4f4f4;
+    }
+    td.status-found {
+      color: green;
+      font-weight: bold;
+    }
+    td.status-notfound {
+      color: red;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h2>Upload CSV of Usernames v5</h2>
+  <input type="file" id="fileInput" />
+  <button onclick="uploadFile()">Upload</button>
+
+  <div id="resultTable"></div>
+
+  <script>
+    async function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert("Please select a file");
+
+      const filename = file.name;
+      const apiBase = 'https://r17kfnfm4e.execute-api.us-west-2.amazonaws.com';
+
+      // Step 1: Get presigned upload URL
+      const uploadUrl = await fetch(`${apiBase}/dev/s3-workspace-lambda?filename=${encodeURIComponent(filename)}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'text/plain'
+        }
+      }).then(res => res.text());
+
+      // Step 2: Upload file to S3
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: file
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        alert(`Upload failed: ${response.status}\n${text}`);
+        return;
+      }
+
+      alert("Uploaded successfully!");
+
+      // Step 3: Call Lambda via API Gateway to process the uploaded file
+      const lookupRes = await fetch(`${apiBase}/dev/process-csv?filename=${encodeURIComponent(filename)}`);
+      const data = await lookupRes.json();
+
+      renderResults(data);
+    }
+
+    function renderResults(data) {
+      const table = document.createElement('table');
+      table.innerHTML = `
+        <tr><th>Email</th><th>Status</th></tr>
+        ${data.map(row => `
+          <tr>
+            <td>${row.email}</td>
+            <td class="${row.status === 'Found' ? 'status-found' : 'status-notfound'}">${row.status}</td>
+          </tr>`).join('')}
+      `;
+      document.getElementById('resultTable').innerHTML = '';
+      document.getElementById('resultTable').appendChild(table);
+    }
+  </script>
+</body>
+</html>
