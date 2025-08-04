@@ -1,0 +1,10 @@
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>https://d4px8x18daeqs.cloudfront.net</AllowedOrigin>
+    <AllowedMethod>PUT</AllowedMethod>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+    <ExposeHeader>ETag</ExposeHeader>
+  </CORSRule>
+</CORSConfiguration>
