@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template for ADUE Dev - VDI Automation including S3, Lambda,
+  IAM, Secrets Manager, CloudFront, and API Gateway.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, int, prod]
+    Description: Environment name
+
+Resources:
+
+  ADUEDevS3UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub adue-${Environment}-upload-bucket
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: VDI Automation Uploads
+
+  ADUEDevLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ADUE-${Environment}-LambdaRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::adue-${Environment}-upload-bucket/*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
+
+  ADUEDevLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ADUE-${Environment}-WorkspaceHandler
+      Runtime: python3.11
+      Role: !GetAtt ADUEDevLambdaExecutionRole.Arn
+      Handler: lambda_function.lambda_handler
+      Code:
+        S3Bucket: !Sub adue-${Environment}-upload-bucket
+        S3Key: lambda/azure-s3-lambda-workspace-creation.zip
+      Timeout: 30
+      MemorySize: 256
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
+
+  ADUEDevSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ADUE-${Environment}-GraphAPIToken
+      Description: Graph API token for Azure user validation
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
+
+  ADUEDevApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ADUE-${Environment}-VDIApi
+      Description: API Gateway for CSV upload Lambda
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
+
+  ADUEDevApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ADUEDevApiGateway
+      ParentId: !GetAtt ADUEDevApiGateway.RootResourceId
+      PathPart: process-csv
+
+  ADUEDevApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ADUEDevApiGateway
+      ResourceId: !Ref ADUEDevApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: 
+          Fn::Sub:
+            - arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - { Region: !Ref "AWS::Region", LambdaArn: !GetAtt ADUEDevLambdaFunction.Arn }
+
+  ADUEDevLambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ADUEDevLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ADUEDevApiGateway}/*/POST/process-csv
+
+  ADUEDevCloudFront:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub adue-${Environment}-upload-bucket.s3.amazonaws.com
+            Id: S3Origin
+            S3OriginConfig: {}
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+        DefaultRootObject: index.html
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: AppName
+          Value: ADUE
+        - Key: Environment
+          Value: !Ref Environment
