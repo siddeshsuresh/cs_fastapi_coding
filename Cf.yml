@@ -155,3 +155,189 @@ Resources:
           Value: ADUE
         - Key: Environment
           Value: !Ref Environment
+
+
+
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Workspace CSV Uploader Stack
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, int, prod]
+    Description: Deployment environment
+
+  ApplicationName:
+    Type: String
+    Default: Workspace_CSV_Uploader
+    Description: Logical application name used for naming and tagging
+
+  BucketName:
+    Type: String
+    Description: S3 bucket for file uploads
+
+  LambdaS3Key:
+    Type: String
+    Description: Lambda ZIP file S3 key
+
+  ConfigFileKey:
+    Type: String
+    Description: Configuration file key (optional)
+
+  ScheduleExpression:
+    Type: String
+    Description: Cron schedule for EventBridge rule
+
+  KmsKeyId:
+    Type: String
+    Description: ARN of KMS key to decrypt secrets
+
+Resources:
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApplicationName}-${Environment}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub 'arn:aws:s3:::${BucketName}/*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: '*'
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref Environment
+
+  AppSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ApplicationName}/${Environment}/credentials'
+      Description: !Sub 'Credentials for ${ApplicationName} in ${Environment}'
+      KmsKeyId: !Ref KmsKeyId
+      SecretString: !Sub |
+        {
+          "CSV_SECRET": "example-value"
+        }
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref Environment
+
+  WorkspaceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ApplicationName}-${Environment}-lambda'
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 30
+      MemorySize: 256
+      Architectures: [x86_64]
+      Code:
+        S3Bucket: !Ref BucketName
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          CONFIG_FILE_KEY: !Ref ConfigFileKey
+          CSV_SECRET: !Ref AppSecrets
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref Environment
+
+  FileUploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            Id: TierToIntelligentAfter30Days
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 30
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: Prefix
+                    Value: uploads/
+                  - Name: Suffix
+                    Value: .csv
+            Function: !GetAtt WorkspaceLambda.Arn
+    DeletionPolicy: Retain
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WorkspaceLambda
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${BucketName}'
+
+  FileUploadCDN:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: s3Origin
+            DomainName: !Sub '${BucketName}.s3.amazonaws.com'
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: s3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+    DeletionPolicy: Retain
+
+Outputs:
+  LambdaFunctionName:
+    Value: !Ref WorkspaceLambda
+    Export:
+      Name: !Sub '${ApplicationName}-LambdaFunctionName-${Environment}'
+
+  LambdaFunctionArn:
+    Value: !GetAtt WorkspaceLambda.Arn
+    Export:
+      Name: !Sub '${ApplicationName}-LambdaFunctionArn-${Environment}'
+
+  SecretsArn:
+    Value: !Ref AppSecrets
+    Export:
+      Name: !Sub '${ApplicationName}-Secrets-${Environment}'
