@@ -341,3 +341,76 @@ Outputs:
     Value: !Ref AppSecrets
     Export:
       Name: !Sub '${ApplicationName}-Secrets-${Environment}'
+
+
+  PresignedUploadHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ApplicationName}-${Environment}-http-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - https://d4px8x18daeqs.cloudfront.net
+        AllowMethods:
+          - GET
+          - PUT
+          - HEAD
+        AllowHeaders:
+          - content-type
+        ExposeHeaders:
+          - etag
+        MaxAge: 0
+        AllowCredentials: false
+      Tags:
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Environment
+          Value: !Ref Environment
+
+  PresignedUploadApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref PresignedUploadHttpApi
+      StageName: dev
+      AutoDeploy: true
+      Description: !Sub 'Auto deployment stage for ${ApplicationName}'
+
+  ProcessCSVIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PresignedUploadHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WorkspaceLambda.Arn}/invocations'
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  ProcessCSVRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PresignedUploadHttpApi
+      RouteKey: 'GET /process-csv'
+      Target: !Sub 'integrations/${ProcessCSVIntegration}'
+
+  S3WorkspaceLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PresignedUploadHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WorkspaceLambda.Arn}/invocations'
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  S3WorkspaceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PresignedUploadHttpApi
+      RouteKey: 'GET /s3-workspace-lambda'
+      Target: !Sub 'integrations/${S3WorkspaceLambdaIntegration}'
+
+  ApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WorkspaceLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PresignedUploadHttpApi}/*/*'
