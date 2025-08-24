@@ -1,0 +1,30 @@
+function renderResults(found, notFound) {
+  const results = document.getElementById("results");
+
+  results.innerHTML = `
+    <table>
+      <tr>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Has VDI</th>
+        <th>Workspace ID</th>
+      </tr>
+      ${found.map(user => `
+        <tr>
+          <td>${user.email}</td>
+          <td style="color: green;">Found</td>
+          <td>${user.has_vdi || 'No'}</td>
+          <td>${user.workspace_id || '-'}</td>
+        </tr>
+      `).join('')}
+      ${notFound.map(user => `
+        <tr>
+          <td>${user.email}</td>
+          <td style="color: red;">Not Found</td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
+}
