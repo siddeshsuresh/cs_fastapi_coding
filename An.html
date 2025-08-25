@@ -1,0 +1,32 @@
+async function createMissingWorkspaces() {
+  const usersToCreate = [];
+
+  // Reuse the same found list rendered above
+  const rows = document.querySelectorAll("#results table tr");
+
+  rows.forEach((row, index) => {
+    if (index === 0) return; // skip header
+
+    const status = row.cells[1]?.innerText.trim();
+    const workspaceId = row.cells[3]?.innerText.trim();
+    const email = row.cells[0]?.innerText.trim();
+
+    if (status === 'Found' && (workspaceId === '-' || workspaceId === '')) {
+      usersToCreate.push(email);
+    }
+  });
+
+  if (usersToCreate.length === 0) {
+    return alert("No users without Workspaces to create.");
+  }
+
+  const apiBase = 'https://<your-api-id>.execute-api.us-west-2.amazonaws.com';
+  const response = await fetch(`${apiBase}/dev/create-workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ users: usersToCreate })
+  });
+
+  const result = await response.json();
+  alert("Workspace creation triggered:\n" + JSON.stringify(result, null, 2));
+}
