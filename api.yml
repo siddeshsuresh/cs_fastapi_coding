@@ -1,0 +1,23 @@
+CreateWorkspacesIntegration:
+  Type: AWS::ApiGatewayV2::Integration
+  Properties:
+    ApiId: !Ref PresignedUploadHttpApi
+    IntegrationType: AWS_PROXY
+    IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateWorkspacesLambdaFunction.Arn}/invocations
+    IntegrationMethod: POST
+    PayloadFormatVersion: '2.0'
+
+CreateWorkspacesRoute:
+  Type: AWS::ApiGatewayV2::Route
+  Properties:
+    ApiId: !Ref PresignedUploadHttpApi
+    RouteKey: POST /create-workspaces
+    Target: !Sub integrations/${CreateWorkspacesIntegration}
+
+ApiGatewayPermissionCreate:
+  Type: AWS::Lambda::Permission
+  Properties:
+    FunctionName: !Ref CreateWorkspacesLambdaFunction
+    Action: lambda:InvokeFunction
+    Principal: apigateway.amazonaws.com
+    SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PresignedUploadHttpApi}/*/POST/create-workspaces
