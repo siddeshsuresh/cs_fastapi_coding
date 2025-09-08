@@ -1,122 +1,192 @@
-
 trigger:
   branches:
-    include: [ main ]
+    include:
+      - dev
 
+# Select just the environment at queue time.
 parameters:
   - name: environment
-    displayName: Environment
+    displayName: 'Select Environment'
     type: string
     default: dev
-    values: [ dev, int, prod ]
-
-  - name: awsRegion
-    type: string
-    default: us-west-2
-
-  - name: stackName
-    type: string
-    default: auto-vdi-${{ parameters.environment }}
-
-  - name: reportBucketName
-    type: string
-    default: adue-auto-vdi-reports-${{ parameters.environment }}
-
-  - name: azureSecretName
-    type: string
-    default: entra-app-secret-${{ parameters.environment }}
-
-  - name: groupId
-    type: string
-    default: 00000000-0000-0000-0000-000000000000
-
-  - name: directoryId
-    type: string
-    default: d-xxxxxxxxx
-
-  - name: bundleId
-    type: string
-    default: wsb-xxxxxxxxx
-
-  - name: emailSender
-    type: string
-    default: noreply@example.com
-
-  - name: emailRecipients
-    type: string
-    default: ops@example.com
-
-  - name: dryRun
-    type: string
-    default: 'false'
-
-pool:
-  vmImage: 'ubuntu-latest'
+    values: [ dev, int, eucnp ]
 
 variables:
-  ARTIFACT_BUCKET: auto-vdi-artifacts-${{ parameters.environment }}
-  RECON_ZIP: reconciler.zip
-  SUMMARY_ZIP: daily_summary.zip
+  # Pull your OIDC creds etc. from a Library variable group (same as your sample)
+  - group: Azure_Credentials
+
+  # ---------- FILL THESE ONCE PER REPO ----------
+  - name: applicationName
+    value: 'adue-workspaces-deaborn'    # used to name the artifact bucket like <app>-<env>-lambda-upload-bucket
+
+  - name: awsRegion
+    value: 'us-west-2'
+
+  # WorkSpaces / Email / Graph config (passed to CFN as parameters)
+  - name: groupId                    # Entra security group (object id)
+    value: '00000000-0000-0000-0000-000000000000'
+  - name: directoryId                # WorkSpaces DirectoryId
+    value: 'd-xxxxxxxxx'
+  - name: bundleId                   # WorkSpaces BundleId
+    value: 'wsb-xxxxxxxxx'
+  - name: emailSender
+    value: 'noreply@example.com'
+  - name: emailRecipients            # comma-separated
+    value: 'ops@example.com'
+  - name: azureSecretName            # Secrets Manager secret (tenant_id, client_id, client_secret)
+    value: 'entra-app-secret-$(parameters.environment)'
+  - name: reportBucketName           # S3 for daily CSVs (you may already have one; otherwise create once)
+    value: 'adue-auto-vdi-reports-$(parameters.environment)'
+  - name: dryRun                     # 'true' for day-1 validation
+    value: 'false'
+
+  # Use your per-env AWS service connection name like in your screenshot
+  - name: awsCredentials
+    ${{ if eq(parameters.environment, 'dev') }}:
+      value: 'buildAgent-ITEmployeeExperience-pu@ADUEDev'
+    ${{ if eq(parameters.environment, 'int') }}:
+      value: 'buildAgent-ITEmployeeExperience-pu@ADUEInt'
+    ${{ if eq(parameters.environment, 'eucnp') }}:
+      value: 'buildAgent-ITEmployeeExperience@EUC-NP'
+
+  # Derived names (match your pattern)
+  - name: artifactBucket
+    value: '$(applicationName)-${{ parameters.environment }}-lambda-upload-bucket'
+  - name: stackName
+    value: '$(applicationName)-auto-vdi-${{ parameters.environment }}'
+  - name: reconZip
+    value: 'reconciler.zip'
+  - name: summaryZip
+    value: 'daily_summary.zip'
 
 stages:
+  # 1) Build Lambda zips (reconciler + daily summary)
   - stage: Build
+    displayName: 'Package Lambda Artifacts'
     jobs:
       - job: Package
+        pool:
+          vmImage: 'ubuntu-latest'
         steps:
           - task: UsePythonVersion@0
             inputs:
               versionSpec: '3.12'
+
           - script: |
               python -m pip install -r requirements.txt -t ./package_common
-            displayName: 'Install dependencies (common)'
+            displayName: 'Install dependencies (requests)'
+
           - script: |
+              set -e
               mkdir -p out
               cp -r src/reconciler ./package_reconciler
-              cp package_common/* package_reconciler/ 2>/dev/null || true
+              cp -r package_common/* ./package_reconciler/ 2>/dev/null || true
               pushd package_reconciler
-              zip -r ../out/$(RECON_ZIP) .
+              zip -r ../out/$(reconZip) .
               popd
+
               cp -r src/daily_summary ./package_summary
-              cp package_common/* package_summary/ 2>/dev/null || true
+              cp -r package_common/* ./package_summary/ 2>/dev/null || true
               pushd package_summary
-              zip -r ../out/$(SUMMARY_ZIP) .
+              zip -r ../out/$(summaryZip) .
               popd
             displayName: 'Zip Lambda packages'
+
           - publish: out
             artifact: lambda_packages
+            displayName: 'Publish Lambda packages'
 
-  - stage: Deploy
+  # 2) Ensure artifact bucket exists (your "<app>-<env>-lambda-upload-bucket")
+  - stage: DeployS3BucketStack
+    displayName: 'Prepare Artifact Bucket'
     dependsOn: Build
     jobs:
-      - job: CFN
+      - job: DeployBucket
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AWSCLI@1
+            displayName: 'Create artifact bucket if not exists'
+            inputs:
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
+              awsCommand: |
+                if ! aws s3 ls "s3://$(artifactBucket)" 2>/dev/null; then
+                  aws s3 mb "s3://$(artifactBucket)"
+                fi
+
+  # 3) Upload zips to your artifact bucket (and optional static HTML if you keep that step)
+  - stage: UploadLambdaZipToBucket
+    displayName: 'Upload Lambda Zips'
+    dependsOn: DeployS3BucketStack
+    jobs:
+      - job: UploadZips
+        pool:
+          vmImage: 'ubuntu-latest'
         steps:
           - download: current
             artifact: lambda_packages
 
           - task: AWSCLI@1
-            displayName: 'Create artifact bucket if not exists'
+            displayName: 'Upload reconciler.zip'
             inputs:
-              awsCredentials: 'aws-oidc-connection'
-              regionName: '${{ parameters.awsRegion }}'
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
               awsCommand: |
-                if ! aws s3 ls "s3://$(ARTIFACT_BUCKET)" 2>/dev/null; then
-                  aws s3 mb "s3://$(ARTIFACT_BUCKET)"
-                fi
+                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(reconZip) s3://$(artifactBucket)/$(reconZip)
 
           - task: AWSCLI@1
-            displayName: 'Upload Lambda zips'
+            displayName: 'Upload daily_summary.zip'
             inputs:
-              awsCredentials: 'aws-oidc-connection'
-              regionName: '${{ parameters.awsRegion }}'
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
               awsCommand: |
-                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(RECON_ZIP) s3://$(ARTIFACT_BUCKET)/$(RECON_ZIP)
-                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(SUMMARY_ZIP) s3://$(ARTIFACT_BUCKET)/$(SUMMARY_ZIP)
+                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(summaryZip) s3://$(artifactBucket)/$(summaryZip)
 
+  # 4) Deploy the CloudFormation stack that creates both Lambdas, DynamoDB, S3 reports bucket & Schedules
+  - stage: AutomationStack
+    displayName: 'Deploy Auto-VDI CloudFormation'
+    dependsOn: UploadLambdaZipToBucket
+    jobs:
+      - job: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
           - task: AWSCLI@1
-            displayName: 'Deploy CloudFormation stack'
+            displayName: 'Deploy Auto-VDI stack'
             inputs:
-              awsCredentials: 'aws-oidc-connection'
-              regionName: '${{ parameters.awsRegion }}'
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
               awsCommand: |
-                aws cloudformation deploy                       --stack-name "${{ parameters.stackName }}"                       --template-file infra/template.yaml                       --capabilities CAPABILITY_NAMED_IAM                       --parameter-overrides                         EnvironmentName=${{ parameters.environment }}                         ReportBucketName=${{ parameters.reportBucketName }}                         AzureSecretName=${{ parameters.azureSecretName }}                         GroupId=${{ parameters.groupId }}                         DirectoryId=${{ parameters.directoryId }}                         BundleId=${{ parameters.bundleId }}                         EmailSender=${{ parameters.emailSender }}                         EmailRecipients=${{ parameters.emailRecipients }}                         DryRun=${{ parameters.dryRun }}                         ReconcilerCodeS3Bucket=$(ARTIFACT_BUCKET)                         ReconcilerCodeS3Key=$(RECON_ZIP)                         SummaryCodeS3Bucket=$(ARTIFACT_BUCKET)                         SummaryCodeS3Key=$(SUMMARY_ZIP)
+                set -e
+                aws cloudformation deploy \
+                  --stack-name "$(stackName)" \
+                  --template-file infra/template.yaml \
+                  --capabilities CAPABILITY_NAMED_IAM \
+                  --parameter-overrides \
+                    EnvironmentName=${{ parameters.environment }} \
+                    ReportBucketName=$(reportBucketName) \
+                    AzureSecretName=$(azureSecretName) \
+                    GroupId=$(groupId) \
+                    DirectoryId=$(directoryId) \
+                    BundleId=$(bundleId) \
+                    EmailSender=$(emailSender) \
+                    EmailRecipients="$(emailRecipients)" \
+                    MaxCreatesPerRun=50 \
+                    RunningMode=AUTO_STOP \
+                    RunningModeTimeout=60 \
+                    DryRun=$(dryRun) \
+                    ReconcilerCodeS3Bucket=$(artifactBucket) \
+                    ReconcilerCodeS3Key=$(reconZip) \
+                    SummaryCodeS3Bucket=$(artifactBucket) \
+                    SummaryCodeS3Key=$(summaryZip)
 
+          # (Optional) read an output back if you add any in CFN
+          - task: AWSCLI@1
+            name: GetOutputs
+            displayName: 'Get CFN outputs'
+            inputs:
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
+              awsCommand: |
+                aws cloudformation describe-stacks --stack-name "$(stackName)" --query "Stacks[0].Outputs"
