@@ -1,0 +1,264 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Auto-VDI — Entra group to AWS WorkSpaces reconciler + daily summary
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+  ReportBucketName:
+    Type: String
+    Description: S3 bucket name to store daily reports/snapshots
+  AzureSecretName:
+    Type: String
+    Description: Secrets Manager secret name containing tenant_id, client_id, client_secret
+  GroupId:
+    Type: String
+    Description: Entra ID security group object id
+  DirectoryId:
+    Type: String
+    Description: AWS WorkSpaces DirectoryId (also provided to Lambda as env var)
+  BundleId:
+    Type: String
+    Description: AWS WorkSpaces BundleId (also provided to Lambda as env var)
+  EmailSender:
+    Type: String
+    Description: SES-verified sender address
+  EmailRecipients:
+    Type: String
+    Description: Comma-separated list of recipients
+  MaxCreatesPerRun:
+    Type: Number
+    Default: 50
+  RunningMode:
+    Type: String
+    Default: AUTO_STOP
+    AllowedValues: [AUTO_STOP, ALWAYS_ON]
+  RunningModeTimeout:
+    Type: Number
+    Default: 60
+  DryRun:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+  ReconcilerCodeS3Bucket:
+    Type: String
+  ReconcilerCodeS3Key:
+    Type: String
+  SummaryCodeS3Bucket:
+    Type: String
+  SummaryCodeS3Key:
+    Type: String
+
+Resources:
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ReportBucketName
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old
+            Status: Enabled
+            ExpirationInDays: 365
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub AutoVdiAudit-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  ReconcilerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub auto-vdi-reconciler-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: auto-vdi-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - workspaces:Describe*
+                  - workspaces:CreateWorkspaces
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource: !GetAtt AuditTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${ReportBucketName}/*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                Resource: "*"
+
+  SummaryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub auto-vdi-summary-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: auto-vdi-summary-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource: !GetAtt AuditTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::${ReportBucketName}/*
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                Resource: "*"
+
+  ReconcilerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub auto-vdi-reconciler-${EnvironmentName}
+      Runtime: python3.12
+      Handler: app.handler
+      Role: !GetAtt ReconcilerRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ReconcilerCodeS3Bucket
+        S3Key: !Ref ReconcilerCodeS3Key
+      Environment:
+        Variables:
+          GROUP_ID: !Ref GroupId
+          DIRECTORY_ID: !Ref DirectoryId
+          BUNDLE_ID: !Ref BundleId
+          AZURE_SECRET_NAME: !Ref AzureSecretName
+          REPORT_BUCKET: !Ref ReportBucketName
+          EMAIL_SENDER: !Ref EmailSender
+          EMAIL_RECIPIENTS: !Ref EmailRecipients
+          AUDIT_TABLE: !Sub AutoVdiAudit-${EnvironmentName}
+          MAX_CREATES_PER_RUN: !Ref MaxCreatesPerRun
+          RUNNING_MODE: !Ref RunningMode
+          RUNNING_MODE_TIMEOUT: !Ref RunningModeTimeout
+          DRY_RUN: !Ref DryRun
+
+  SummaryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub auto-vdi-daily-summary-${EnvironmentName}
+      Runtime: python3.12
+      Handler: app.handler
+      Role: !GetAtt SummaryRole.Arn
+      Timeout: 300
+      MemorySize: 384
+      Code:
+        S3Bucket: !Ref SummaryCodeS3Bucket
+        S3Key: !Ref SummaryCodeS3Key
+      Environment:
+        Variables:
+          GROUP_ID: !Ref GroupId
+          DIRECTORY_ID: !Ref DirectoryId
+          BUNDLE_ID: !Ref BundleId
+          AZURE_SECRET_NAME: !Ref AzureSecretName
+          REPORT_BUCKET: !Ref ReportBucketName
+          EMAIL_SENDER: !Ref EmailSender
+          EMAIL_RECIPIENTS: !Ref EmailRecipients
+          AUDIT_TABLE: !Sub AutoVdiAudit-${EnvironmentName}
+
+  # EventBridge Scheduler (CST timezone)
+  ReconcilerSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub auto-vdi-reconciler-${EnvironmentName}
+      FlexibleTimeWindow: { Mode: OFF }
+      ScheduleExpressionTimezone: America/Chicago
+      ScheduleExpression: cron(0/30 9-17 ? * MON-FRI *)
+      Target:
+        Arn: !GetAtt ReconcilerFunction.Arn
+        RoleArn: !GetAtt SchedulerInvokeRole.Arn
+
+  SummarySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub auto-vdi-summary-${EnvironmentName}
+      FlexibleTimeWindow: { Mode: OFF }
+      ScheduleExpressionTimezone: America/Chicago
+      ScheduleExpression: cron(5 17 ? * MON-FRI *)
+      Target:
+        Arn: !GetAtt SummaryFunction.Arn
+        RoleArn: !GetAtt SchedulerInvokeRole.Arn
+
+  SchedulerInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub auto-vdi-scheduler-invoke-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: can-invoke-lambdas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ReconcilerFunction.Arn
+                  - !GetAtt SummaryFunction.Arn
+
+Outputs:
+  ReportsBucketOut:
+    Value: !Ref ReportBucketName
+    Export:
+      Name: !Sub AutoVdi-ReportsBucket-${EnvironmentName}
+  AuditTableOut:
+    Value: !Sub AutoVdiAudit-${EnvironmentName}
+    Export:
+      Name: !Sub AutoVdi-AuditTable-${EnvironmentName}
+  ReconcilerFunctionName:
+    Value: !Ref ReconcilerFunction
+  SummaryFunctionName:
+    Value: !Ref SummaryFunction

@@ -1,0 +1,122 @@
+
+trigger:
+  branches:
+    include: [ main ]
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values: [ dev, int, prod ]
+
+  - name: awsRegion
+    type: string
+    default: us-west-2
+
+  - name: stackName
+    type: string
+    default: auto-vdi-${{ parameters.environment }}
+
+  - name: reportBucketName
+    type: string
+    default: adue-auto-vdi-reports-${{ parameters.environment }}
+
+  - name: azureSecretName
+    type: string
+    default: entra-app-secret-${{ parameters.environment }}
+
+  - name: groupId
+    type: string
+    default: 00000000-0000-0000-0000-000000000000
+
+  - name: directoryId
+    type: string
+    default: d-xxxxxxxxx
+
+  - name: bundleId
+    type: string
+    default: wsb-xxxxxxxxx
+
+  - name: emailSender
+    type: string
+    default: noreply@example.com
+
+  - name: emailRecipients
+    type: string
+    default: ops@example.com
+
+  - name: dryRun
+    type: string
+    default: 'false'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  ARTIFACT_BUCKET: auto-vdi-artifacts-${{ parameters.environment }}
+  RECON_ZIP: reconciler.zip
+  SUMMARY_ZIP: daily_summary.zip
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Package
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+          - script: |
+              python -m pip install -r requirements.txt -t ./package_common
+            displayName: 'Install dependencies (common)'
+          - script: |
+              mkdir -p out
+              cp -r src/reconciler ./package_reconciler
+              cp package_common/* package_reconciler/ 2>/dev/null || true
+              pushd package_reconciler
+              zip -r ../out/$(RECON_ZIP) .
+              popd
+              cp -r src/daily_summary ./package_summary
+              cp package_common/* package_summary/ 2>/dev/null || true
+              pushd package_summary
+              zip -r ../out/$(SUMMARY_ZIP) .
+              popd
+            displayName: 'Zip Lambda packages'
+          - publish: out
+            artifact: lambda_packages
+
+  - stage: Deploy
+    dependsOn: Build
+    jobs:
+      - job: CFN
+        steps:
+          - download: current
+            artifact: lambda_packages
+
+          - task: AWSCLI@1
+            displayName: 'Create artifact bucket if not exists'
+            inputs:
+              awsCredentials: 'aws-oidc-connection'
+              regionName: '${{ parameters.awsRegion }}'
+              awsCommand: |
+                if ! aws s3 ls "s3://$(ARTIFACT_BUCKET)" 2>/dev/null; then
+                  aws s3 mb "s3://$(ARTIFACT_BUCKET)"
+                fi
+
+          - task: AWSCLI@1
+            displayName: 'Upload Lambda zips'
+            inputs:
+              awsCredentials: 'aws-oidc-connection'
+              regionName: '${{ parameters.awsRegion }}'
+              awsCommand: |
+                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(RECON_ZIP) s3://$(ARTIFACT_BUCKET)/$(RECON_ZIP)
+                aws s3 cp $(Pipeline.Workspace)/lambda_packages/$(SUMMARY_ZIP) s3://$(ARTIFACT_BUCKET)/$(SUMMARY_ZIP)
+
+          - task: AWSCLI@1
+            displayName: 'Deploy CloudFormation stack'
+            inputs:
+              awsCredentials: 'aws-oidc-connection'
+              regionName: '${{ parameters.awsRegion }}'
+              awsCommand: |
+                aws cloudformation deploy                       --stack-name "${{ parameters.stackName }}"                       --template-file infra/template.yaml                       --capabilities CAPABILITY_NAMED_IAM                       --parameter-overrides                         EnvironmentName=${{ parameters.environment }}                         ReportBucketName=${{ parameters.reportBucketName }}                         AzureSecretName=${{ parameters.azureSecretName }}                         GroupId=${{ parameters.groupId }}                         DirectoryId=${{ parameters.directoryId }}                         BundleId=${{ parameters.bundleId }}                         EmailSender=${{ parameters.emailSender }}                         EmailRecipients=${{ parameters.emailRecipients }}                         DryRun=${{ parameters.dryRun }}                         ReconcilerCodeS3Bucket=$(ARTIFACT_BUCKET)                         ReconcilerCodeS3Key=$(RECON_ZIP)                         SummaryCodeS3Bucket=$(ARTIFACT_BUCKET)                         SummaryCodeS3Key=$(SUMMARY_ZIP)
+
