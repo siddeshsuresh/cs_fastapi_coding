@@ -1,0 +1,168 @@
+trigger:
+  branches:
+    include:
+      - dev   # or main, or remove trigger if you only want manual runs
+
+# ─────────────────────────────────────────────
+# Pipeline parameters (things you choose at run time)
+# ─────────────────────────────────────────────
+parameters:
+  - name: environment
+    displayName: 'Select AWS Account / Environment'
+    type: string
+    default: 'dev'
+    values:
+      - dev
+      - int
+      - eucnp
+      - eucprd
+
+  # EC2 / Service Catalog inputs
+  - name: provisionedProductName
+    displayName: 'Provisioned Product Name (EC2 name in Service Catalog)'
+    type: string
+
+  - name: serverName
+    displayName: 'EC2 Server Name (15 chars max)'
+    type: string
+
+  - name: amiId
+    displayName: 'AMI ID (Service Catalog option, e.g. windows2025)'
+    type: string
+    default: 'windows2025'
+
+  - name: instanceType
+    displayName: 'EC2 Instance Type'
+    type: string
+    default: 't3a.small'
+
+  - name: availabilityZone
+    displayName: 'Availability Zone (Service Catalog option)'
+    type: string
+    default: 'AvailabilityZone1'
+
+  - name: windowsAdmin
+    displayName: 'Windows Admin (domain user / group)'
+    type: string
+
+  # Tag / business metadata
+  - name: applicationCode
+    displayName: 'Application Code (APPL tag)'
+    type: string
+
+  - name: au
+    displayName: 'AU (5 digit accounting unit)'
+    type: string
+
+  - name: windowsPatchGroup
+    displayName: 'Windows Patch Group'
+    type: string
+    default: 'non-prod'
+
+  - name: drImpact
+    displayName: 'DR Impact'
+    type: string
+    default: 'base'
+
+  - name: supportChannel
+    displayName: 'Support Channel (mail:TEAM@...)'
+    type: string
+
+  - name: schedule
+    displayName: 'Schedule (Service Catalog option, e.g. daily-stop-5pm-pt)'
+    type: string
+    default: 'daily-stop-5pm-pt'
+
+  - name: usageDescription
+    displayName: '(OPTIONAL) Usage / App Description'
+    type: string
+    default: ''
+
+  - name: snowCI
+    displayName: '(OPTIONAL) SNOW CI'
+    type: string
+    default: ''
+
+  - name: customSecurityGroup
+    displayName: 'Create Custom Security Group? (yes/no)'
+    type: string
+    default: 'no'
+    values:
+      - 'yes'
+      - 'no'
+
+# ─────────────────────────────────────────────
+# Variables
+# ─────────────────────────────────────────────
+variables:
+  # Your existing variable group for AWS creds / misc secrets
+  - group: Azure_Credentials
+
+  # Region where the Service Catalog product lives
+  - name: awsRegion
+    value: 'us-west-2'
+
+  # Map environment → AWS service connection
+  - name: awsCredentials
+    ${{ if eq(parameters.environment, 'dev') }}:
+      value: 'REPLACE_ME-Dev-ServiceConnection'
+    ${{ if eq(parameters.environment, 'int') }}:
+      value: 'REPLACE_ME-Int-ServiceConnection'
+    ${{ if eq(parameters.environment, 'eucnp') }}:
+      value: 'REPLACE_ME-EUCNP-ServiceConnection'
+    ${{ if eq(parameters.environment, 'eucprd') }}:
+      value: 'REPLACE_ME-EUCPRD-ServiceConnection'
+
+  # Service Catalog product details (from AWS console)
+  # Product: "Windows EC2 Instance"
+  - name: scProductId
+    value: 'prod-REPLACE_ME'             # e.g. prod-abc123xyz
+  - name: scProvisioningArtifactId
+    value: 'pa-REPLACE_ME'               # e.g. pa-1a2b3c4d (v4.10)
+  - name: scPathId
+    value: 'lp-REPLACE_ME'               # if you have a launch path; else remove --path-id
+
+# ─────────────────────────────────────────────
+# Stages
+# ─────────────────────────────────────────────
+stages:
+  - stage: ProvisionEC2FromServiceCatalog
+    displayName: 'Provision EC2 via AWS Service Catalog'
+    jobs:
+      - job: ProvisionEC2
+        displayName: 'Call Service Catalog to launch EC2'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        steps:
+          - task: AWSCLI@1
+            displayName: 'Provision product in Service Catalog'
+            inputs:
+              awsCredentials: '$(awsCredentials)'
+              regionName: '$(awsRegion)'
+              awsCommand: 'servicecatalog'
+              awsSubCommand: 'provision-product'
+              awsArguments: >
+                --product-id $(scProductId)
+                --provisioned-product-name ${{ parameters.provisionedProductName }}
+                --provisioning-artifact-id $(scProvisioningArtifactId)
+                --path-id $(scPathId)
+                --provisioning-parameters
+                Key=ServerName,Value=${{ parameters.serverName }}
+                Key=AMIId,Value=${{ parameters.amiId }}
+                Key=InstanceType,Value=${{ parameters.instanceType }}
+                Key=AvailabilityZone,Value=${{ parameters.availabilityZone }}
+                Key=WindowsAdmin,Value=${{ parameters.windowsAdmin }}
+                Key=SecurityGroup,Value=Minimum
+                Key=CustomSecurityGroup,Value=${{ parameters.customSecurityGroup }}
+                Key=CustomIamRole,Value=yes
+                Key=TerminationProtection,Value=true
+                --tags
+                Key=ApplicationCode,Value=${{ parameters.applicationCode }}
+                Key=WindowsPatchGroup,Value=${{ parameters.windowsPatchGroup }}
+                Key=AU,Value=${{ parameters.au }}
+                Key=DRImpact,Value=${{ parameters.drImpact }}
+                Key=SupportChannel,Value=${{ parameters.supportChannel }}
+                Key=Schedule,Value=${{ parameters.schedule }}
+                Key=Usage,Value='${{ parameters.usageDescription }}'
+                Key=SnowCI,Value='${{ parameters.snowCI }}'
