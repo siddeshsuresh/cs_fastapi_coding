@@ -1,0 +1,138 @@
+Yep — you should NOT put every input + code line into the Gliffy diagram. A Confluence flowchart is most useful when it shows:
+	•	Trigger → condition → workflow called
+	•	Key decision points (diamonds)
+	•	Big outputs/artifacts (repo created, teams created, variables set, template copied, protections applied)
+	•	Where it can fail + what happens
+
+Below is a clean “Gliffy-ready” flow based on your screenshots (especially the “Summary – Files Called in CREATE FLOW” page).
+
+⸻
+
+Recommended Gliffy layout (simple + clear)
+
+Use 3 swimlanes (or 3 columns):
+	1.	User / GitHub Issue
+	2.	GitHub Actions Orchestrator (Workflows)
+	3.	Terraform + Repo Template Ops (Side effects)
+
+⸻
+
+Flowchart (copy this as your diagram script)
+
+A) Start + Validation
+	1.	Start (Terminator): “User submits Repo Create Issue”
+	•	(small note: issue includes repo:create label + form fields)
+	2.	Process: issue_opened.yml
+	•	Trigger: issue opened / reopened / edited
+	•	Decision (Diamond): “Issue has label repo:create?”
+	•	No → End
+	•	Yes → next
+	3.	Subprocess (double-rectangle): repo_creation_request_validation.yml
+Inside this subprocess, keep it high level:
+	•	Process: “Identify event + parse issue inputs”
+	•	Process: “Validate request”
+	•	Decision: “Valid association/APM?”
+	•	No → Process: “Mark invalid / comment / stop”
+	•	Yes → next
+	•	Decision: “Validation passed overall?”
+	•	No → stop
+	•	Yes → next
+	4.	Process: “Generate task list (create_user_tasks.js)” (optional box — useful as a milestone)
+	5.	Manual/Automation step (Process): “Add label repo:create-in-progress”
+	•	(this is the handoff point from validation → creation)
+
+⸻
+
+B) Creation kickoff (label event)
+	6.	Process: issue_labeled.yml
+	•	Trigger: issue labeled
+	•	Decision: “Label == repo:create-in-progress?”
+	•	No → End
+	•	Yes → next
+	7.	Subprocess: repo_creation_request_create.yml (this is the main orchestration)
+
+⸻
+
+C) Terraform + Repo creation (inside create workflow)
+
+Inside the subprocess, show these as 5–7 boxes max:
+	8.	Process: “Generate token + checkout”
+	9.	Process: “Parse inputs + validate approval”
+	10.	Process: “Generate Terraform modules (create_terraform_modules.js)”
+	•	Outputs (note bubble): create.tf, create_teams.tf
+	11.	Process: “Terraform init + validate”
+	12.	Decision: “Need Trusted Committer Team?”
+	13.	Decision: “Need Closed Repo Dev Team?”
+	14.	Process: “Terraform plan/apply: create GitHub teams + empty repo”
+	•	Outputs (note bubble): “New empty GitHub repo created + teams created”
+
+(You can keep team decisions as 2 small diamonds that branch into the same apply.)
+
+⸻
+
+D) Add files + template customization
+	15.	Subprocess: “Add workflow files to new repo (add_workflow_files.js)”
+
+	•	Outputs (note): “.github/workflows added”
+
+	16.	Decision: “Template selected?”
+
+	•	Alto SPA → checkout alto-spa-ng-reference (distribution)
+	•	Alto API → checkout alto-api-reference (distribution)
+
+	17.	Process: “Detokenize + copy template → new repo (alto_template_detokenization.js)”
+	18.	Process: “Commit + push ‘initial commit’ to main”
+
+⸻
+
+E) Post creation: variables + repo edits + cleanup
+	19.	Process: “Apply repository variables (add_alto_repository_variables.js)”
+
+	•	Output note: “Repo variables set (common + template-specific)”
+
+	20.	Subprocess: “Repo edit (Terraform): branch protection / settings”
+	21.	Process: “Post creation actions + notify (post_creation_actions.js)”
+	22.	End (Terminator): “Repo ready”
+
+⸻
+
+What to include vs exclude (so diagram looks professional)
+
+Include (yes)
+	•	Triggers: issue opened, issue labeled
+	•	Labels: repo:create, repo:create-in-progress
+	•	Main workflows (just names):
+	•	issue_opened.yml
+	•	repo_creation_request_validation.yml
+	•	issue_labeled.yml
+	•	repo_creation_request_create.yml
+	•	custom-template.yml
+	•	alto-framework.yml
+	•	Big outcomes:
+	•	“Teams created”
+	•	“Repo created”
+	•	“Template copied”
+	•	“Workflows added”
+	•	“Repo vars applied”
+	•	“Branch protections applied”
+	•	Failure points:
+	•	“Invalid request / invalid APM / validation failed → comment + stop”
+
+Exclude (no)
+	•	Every single input field (keep only Repo name, Template, Association/APM, Trusted committers, maybe Confidential/Closed flags)
+	•	Exact action versions (actions/checkout@v4, etc.)
+	•	Internal variable names unless they’re critical to understanding
+
+⸻
+
+Gliffy tips (so it looks clean in Confluence)
+	•	Use Subprocess shape for each workflow file (*.yml)
+	•	Use Diamond only for real forks (labels, validation pass/fail, template type)
+	•	Use Callout/Note bubbles for outputs (repo created, files created)
+	•	Keep arrows top → bottom, avoid crossing lines
+
+⸻
+
+If you want, tell me what style you prefer and I’ll format it that way:
+	1.	Single page flowchart (best for Confluence)
+	2.	Two diagrams: “Validation flow” + “Creation flow” (cleanest for reviewers)
